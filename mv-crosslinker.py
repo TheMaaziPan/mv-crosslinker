@@ -19,8 +19,14 @@ if uploaded_file:
         # Read and clean data
         df = pd.read_csv(uploaded_file)
         
-        # Standardize columns
-        df = df.rename(columns={'URL': 'Redirect URL'})
+        # Standardize columns - ensure these match your CSV
+        df = df.rename(columns={
+            'URL': 'Redirect URL',
+            'Product Name': 'Title',  # Adjust based on your CSV
+            'Product Category': 'Category'  # Adjust based on your CSV
+        })
+        
+        # Filter and clean
         required_cols = ['Redirect URL', 'Title', 'Category', 'Subcategory']
         df = df[df['Type'] == 'Hybris'][required_cols].dropna()
         
@@ -28,10 +34,10 @@ if uploaded_file:
         df['keyword'] = df['Title'].apply(
             lambda x: clean_string_and_remove_stopwords(x) if isinstance(x, str) else None)
         
-        # Generate mock data with consistent lengths
+        # Generate mock data
         volume_df = generate_mock_volumes(df['keyword'].dropna().unique())
         
-        # Merge ensuring equal lengths
+        # Merge data
         df = pd.merge(
             df,
             volume_df[['keyword', 'avg_monthly_searches']],
@@ -39,14 +45,20 @@ if uploaded_file:
             how='left'
         ).fillna(0)
         
-        # Process crosslinks
-        crosslinks_df = process_crosslinks(df)
+        # Process crosslinks - ensure consistent column names
+        crosslinks_df = process_crosslinks(df.rename(columns={
+            'Title': 'Target Title',
+            'Redirect URL': 'Target URL'
+        }))
         
-        # Generate category summary
-        category_df = (crosslinks_df
-                      .groupby(['Target Title', 'Source Title'])
-                      .size()
-                      .reset_index(name='Link Count'))
+        # Generate category summary - use existing columns
+        if not crosslinks_df.empty:
+            category_df = (crosslinks_df
+                          .groupby(['Target Title', 'Source Title'])
+                          .size()
+                          .reset_index(name='Link Count'))
+        else:
+            category_df = pd.DataFrame(columns=['Target Title', 'Source Title', 'Link Count'])
         
         # Create Excel output
         output = io.BytesIO()
@@ -63,8 +75,21 @@ if uploaded_file:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-        # Show preview
+        # Show previews
+        st.subheader("Cross Links Preview")
         st.dataframe(crosslinks_df.head())
+        
+        st.subheader("Category Summary")
+        st.dataframe(category_df.head())
         
     except Exception as e:
         st.error(f"Processing error: {str(e)}")
+        st.error("Please check your CSV columns match the expected format:")
+        st.code("""
+        Required columns:
+        - URL (will be renamed to Redirect URL)
+        - Product Name/Title
+        - Category
+        - Subcategory
+        - Type (with 'Hybris' values)
+        """)
