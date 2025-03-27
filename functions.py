@@ -12,81 +12,74 @@ from tqdm import tqdm
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize NLTK with error handling
-try:
-    nltk.data.find('corpora/stopwords')
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    logger.info("Downloading NLTK data...")
-    nltk.download('stopwords')
-    nltk.download('wordnet')
-
+# Initialize NLTK
+nltk.download('stopwords', quiet=True)
+nltk.download('wordnet', quiet=True)
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 
-# Initialize NLP components
 stop_words = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
 
-# Text Processing Functions
 def clean_string_and_remove_stopwords(text):
-    """Clean and normalize text by removing stopwords and lemmatizing"""
+    """Clean text by removing special chars, stopwords, and lemmatizing"""
     if not isinstance(text, str) or not text.strip():
         return None
-        
     try:
-        # Remove special chars and lowercase
         text = re.sub(r'[^a-zA-Z0-9\s]', '', text.lower())
-        # Tokenize, remove stopwords, and lemmatize
         words = [lemmatizer.lemmatize(word) for word in text.split() 
                 if word not in stop_words and len(word) > 2]
         return ' '.join(words)
     except Exception as e:
         logger.error(f"Text cleaning failed: {e}")
-        return text.lower()  # Fallback to simple lowercase
+        return text.lower()
 
-def get_similarity(title, description):
-    """Calculate cosine similarity between texts (0-10 scale)"""
-    if not title or not description:
+def get_similarity(title1, title2):
+    """Calculate similarity between two titles (0-10 scale)"""
+    if not title1 or not title2:
         return 0.0
-        
     try:
         vectorizer = TfidfVectorizer()
-        vectors = vectorizer.fit_transform([title, description])
-        similarity = cosine_similarity(vectors[0:1], vectors[1:2])[0][0] * 10
-        return round(similarity, 2)
+        vectors = vectorizer.fit_transform([title1, title2])
+        return round(cosine_similarity(vectors[0:1], vectors[1:2])[0][0] * 10, 2)
     except Exception as e:
         logger.error(f"Similarity calculation failed: {e}")
         return 0.0
 
-# Data Processing Functions
-def get_ad_volumes(df):
-    """Generate mock search volume data"""
-    keywords = df['keyword'].dropna().unique()
-    months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
-             'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
+def generate_mock_volumes(keywords, months=None):
+    """Generate consistent mock volume data"""
+    if not months:
+        months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
+                'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
     
+    np.random.seed(42)  # For consistent results
     data = {
-        'keyword': np.repeat(keywords, len(months)),
-        **{month: np.random.randint(100, 5000, len(keywords)) for month in months}
+        'keyword': keywords,
+        'avg_monthly_searches': np.random.randint(100, 5000, len(keywords))
     }
+    for month in months:
+        data[month] = np.random.randint(50, 2000, len(keywords))
     
-    volume_data = pd.DataFrame(data)
-    volume_data['avg_monthly_searches'] = volume_data[months].mean(axis=1)
-    return volume_data
+    return pd.DataFrame(data)
 
-def get_gsc_positions():
-    """Generate mock GSC data"""
-    return pd.DataFrame({
-        'keyword': ['dress', 'shoes', 'jacket', 'jeans', 't-shirt'],
-        'position': [2.5, 4.1, 7.8, 3.2, 5.4]
-    })
-
-# Database Functions
-def create_engine():
-    """Create SQLAlchemy engine with error handling"""
-    try:
-        return create_engine('sqlite:///:memory:')  # Default to SQLite
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        return None
+def process_crosslinks(df, similarity_threshold=5):
+    """Generate crosslinks ensuring equal array lengths"""
+    results = []
+    for i, target_row in tqdm(df.iterrows(), total=len(df)):
+        target_text = f"{target_row['Title']} {target_row['Category']}"
+        
+        for j, source_row in df.iterrows():
+            if i != j:
+                source_text = f"{source_row['Title']} {source_row['Category']}"
+                similarity = get_similarity(target_text, source_text)
+                
+                if similarity > similarity_threshold:
+                    results.append({
+                        'Target URL': target_row['Redirect URL'],
+                        'Source URL': source_row['Redirect URL'],
+                        'Target Title': target_row['Title'],
+                        'Source Title': source_row['Title'],
+                        'Similarity': similarity
+                    })
+    
+    return pd.DataFrame(results)
