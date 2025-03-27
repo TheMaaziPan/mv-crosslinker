@@ -9,19 +9,35 @@ from sqlalchemy import create_engine
 import streamlit as st
 from tqdm import tqdm
 import logging
+import os
+import ssl
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize NLTK with error handling
+# ===================== NLTK SETUP =====================
+try:
+    # Try to create unverified SSL context for NLTK downloads
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+# Set NLTK data path
+nltk_data_path = os.path.join(os.path.expanduser("~"), "nltk_data")
+os.makedirs(nltk_data_path, exist_ok=True)
+os.environ["NLTK_DATA"] = nltk_data_path
+
+# Download required NLTK data
 try:
     nltk.data.find('corpora/stopwords')
     nltk.data.find('corpora/wordnet')
-except LookupError as e:
+except LookupError:
     logger.info("Downloading NLTK data...")
-    nltk.download('stopwords')
-    nltk.download('wordnet')
+    nltk.download('stopwords', quiet=True)
+    nltk.download('wordnet', quiet=True)
 
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
@@ -30,13 +46,14 @@ from nltk.stem import WordNetLemmatizer
 stop_words = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
 
-# Default color list as fallback
+# ===================== CONSTANTS =====================
 DEFAULT_COLORS = [
     'red', 'blue', 'green', 'black', 'white', 'yellow',
     'pink', 'purple', 'orange', 'brown', 'gray', 'navy',
     'teal', 'maroon', 'olive', 'silver', 'gold', 'beige'
 ]
 
+# ===================== CORE FUNCTIONS =====================
 def clean_string_and_remove_stopwords(text):
     """Clean and normalize text by removing stopwords and lemmatizing"""
     if not isinstance(text, str) or not text.strip():
@@ -67,6 +84,7 @@ def get_similarity(title, description):
         logger.error(f"Similarity calculation failed: {e}")
         return 0.0
 
+# ===================== DATA FUNCTIONS =====================
 def get_ad_volumes(file_path, df):
     """Get search volume data with fallback to mock data"""
     try:
@@ -108,6 +126,7 @@ def get_gsc_positions(file_path, domain):
         logger.error(f"GSC data generation failed: {e}")
         return pd.DataFrame()
 
+# ===================== DATABASE FUNCTIONS =====================
 def create_engine():
     """Create database engine with credentials from Streamlit secrets"""
     try:
@@ -122,6 +141,7 @@ def create_engine():
         logger.error(f"Database connection failed: {e}")
         return None
 
+# ===================== COLOR FUNCTIONS =====================
 def get_color_codes():
     """Get color names with fallback to default list"""
     try:
@@ -129,6 +149,7 @@ def get_color_codes():
             'http://www.nameacolor.com/COMPLETE%20COLOR%20NAMES%20TABLE.htm',
             timeout=5
         )
+        from bs4 import BeautifulSoup
         soup = BeautifulSoup(response.content, 'html.parser')
         table = soup.find('table')
         colors = pd.read_html(str(table))[0]['COLOR NAME'].str.lower().tolist()
@@ -158,3 +179,13 @@ def extract_color_variations(title, color_codes):
     except Exception as e:
         logger.error(f"Color variation extraction failed: {e}")
         return []
+
+# ===================== INITIALIZATION =====================
+if __name__ == "__main__":
+    # Test NLTK data is available
+    try:
+        nltk.data.find('corpora/stopwords')
+        nltk.data.find('corpora/wordnet')
+        logger.info("NLTK data verified successfully")
+    except Exception as e:
+        logger.error(f"NLTK data verification failed: {e}")
