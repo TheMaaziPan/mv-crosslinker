@@ -16,28 +16,32 @@ uploaded_file = st.file_uploader("Upload ALL_DATA.csv", type="csv")
 
 if uploaded_file:
     try:
-        # Read and clean data
-        df = pd.read_csv(uploaded_file)
+        # Read data with correct template
+        df = pd.read_csv(uploaded_file, sep='\t') if '\t' in uploaded_file.getvalue().decode('utf-8')[:100] else pd.read_csv(uploaded_file)
         
-        # Standardize columns - ensure these match your CSV
-        df = df.rename(columns={
-            'URL': 'Redirect URL',
-            'Product Name': 'Title',  # Adjust based on your CSV
-            'Product Category': 'Category'  # Adjust based on your CSV
-        })
+        # Verify required columns exist
+        required_columns = ['URL', 'Type', 'Category', 'Subcategory', 'Title', 
+                           'Parent Category', 'Count', 'Meta Description', 'Description']
         
-        # Filter and clean
-        required_cols = ['Redirect URL', 'Title', 'Category', 'Subcategory']
-        df = df[df['Type'] == 'Hybris'][required_cols].dropna()
+        missing_cols = [col for col in required_columns if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+
+        # Filter Hybris products
+        df = df[df['Type'] == 'Hybris'].copy()
         
-        # Generate keywords
+        # Generate keywords from Title
         df['keyword'] = df['Title'].apply(
-            lambda x: clean_string_and_remove_stopwords(x) if isinstance(x, str) else None)
+            lambda x: clean_string_and_remove_stopwords(str(x)) if pd.notna(x) else None)
         
-        # Generate mock data
-        volume_df = generate_mock_volumes(df['keyword'].dropna().unique())
+        # Generate mock volumes (aligned with your template)
+        volume_df = generate_mock_volumes(
+            keywords=df['keyword'].dropna().unique(),
+            months=['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
+                   'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
+        )
         
-        # Merge data
+        # Merge with volume data
         df = pd.merge(
             df,
             volume_df[['keyword', 'avg_monthly_searches']],
@@ -45,13 +49,15 @@ if uploaded_file:
             how='left'
         ).fillna(0)
         
-        # Process crosslinks - ensure consistent column names
-        crosslinks_df = process_crosslinks(df.rename(columns={
-            'Title': 'Target Title',
-            'Redirect URL': 'Target URL'
-        }))
+        # Process crosslinks with your exact column names
+        crosslinks_df = process_crosslinks(
+            df.rename(columns={
+                'URL': 'Redirect URL',
+                'Title': 'Target Title'
+            })
+        )
         
-        # Generate category summary - use existing columns
+        # Generate category summary
         if not crosslinks_df.empty:
             category_df = (crosslinks_df
                           .groupby(['Target Title', 'Source Title'])
@@ -71,25 +77,31 @@ if uploaded_file:
         st.download_button(
             label="Download Excel Report",
             data=output.getvalue(),
-            file_name="crosslink_report.xlsx",
+            file_name="newlook_crosslinks.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
         # Show previews
-        st.subheader("Cross Links Preview")
-        st.dataframe(crosslinks_df.head())
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Top Cross Links")
+            st.dataframe(crosslinks_df.sort_values('Similarity', ascending=False).head())
         
-        st.subheader("Category Summary")
-        st.dataframe(category_df.head())
+        with col2:
+            st.subheader("Top Categories")
+            st.dataframe(category_df.sort_values('Link Count', ascending=False).head())
         
     except Exception as e:
-        st.error(f"Processing error: {str(e)}")
-        st.error("Please check your CSV columns match the expected format:")
-        st.code("""
-        Required columns:
-        - URL (will be renamed to Redirect URL)
-        - Product Name/Title
-        - Category
-        - Subcategory
-        - Type (with 'Hybris' values)
+        st.error(f"Error processing file: {str(e)}")
+        st.info("""
+        Your file must match this exact format:
+        - URL (e.g., https://www.newlook.com/uk/women/dresses)
+        - Type (must contain 'Hybris')
+        - Category (e.g., Dresses)
+        - Subcategory (e.g., Summer) 
+        - Title (e.g., Dress)
+        - Parent Category (e.g., Women)
+        - Count (numeric)
+        - Meta Description
+        - Description
         """)
