@@ -4,13 +4,8 @@ import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sqlalchemy import create_engine
 import logging
 from tqdm import tqdm
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Initialize NLTK
 nltk.download('stopwords', quiet=True)
@@ -22,7 +17,7 @@ stop_words = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
 
 def clean_string_and_remove_stopwords(text):
-    """Clean text by removing special chars, stopwords, and lemmatizing"""
+    """Clean product titles for keyword generation"""
     if not isinstance(text, str) or not text.strip():
         return None
     try:
@@ -30,56 +25,55 @@ def clean_string_and_remove_stopwords(text):
         words = [lemmatizer.lemmatize(word) for word in text.split() 
                 if word not in stop_words and len(word) > 2]
         return ' '.join(words)
-    except Exception as e:
-        logger.error(f"Text cleaning failed: {e}")
+    except:
         return text.lower()
 
-def get_similarity(title1, title2):
-    """Calculate similarity between two titles (0-10 scale)"""
-    if not title1 or not title2:
-        return 0.0
+def get_similarity(text1, text2):
+    """Calculate similarity score (0-10 scale)"""
+    if not text1 or not text2:
+        return 0
     try:
         vectorizer = TfidfVectorizer()
-        vectors = vectorizer.fit_transform([title1, title2])
-        return round(cosine_similarity(vectors[0:1], vectors[1:2])[0][0] * 10, 2)
-    except Exception as e:
-        logger.error(f"Similarity calculation failed: {e}")
-        return 0.0
+        tfidf = vectorizer.fit_transform([text1, text2])
+        return round(cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0] * 10, 2)
+    except:
+        return 0
 
 def generate_mock_volumes(keywords, months=None):
-    """Generate consistent mock volume data"""
-    if not months:
-        months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
-                'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
-    
-    np.random.seed(42)  # For consistent results
+    """Generate mock search volumes for New Look products"""
+    np.random.seed(42)  # Consistent results
     data = {
         'keyword': keywords,
         'avg_monthly_searches': np.random.randint(100, 5000, len(keywords))
     }
-    for month in months:
-        data[month] = np.random.randint(50, 2000, len(keywords))
-    
+    if months:
+        for month in months:
+            data[month] = np.random.randint(50, 2000, len(keywords))
     return pd.DataFrame(data)
 
 def process_crosslinks(df, similarity_threshold=5):
-    """Generate crosslinks ensuring equal array lengths"""
+    """Generate crosslinks for New Look products"""
     results = []
-    for i, target_row in tqdm(df.iterrows(), total=len(df)):
-        target_text = f"{target_row['Title']} {target_row['Category']}"
+    
+    for _, target in tqdm(df.iterrows(), total=len(df)):
+        target_text = f"{target['Target Title']} {target['Category']} {target['Subcategory']}"
         
-        for j, source_row in df.iterrows():
-            if i != j:
-                source_text = f"{source_row['Title']} {source_row['Category']}"
+        for _, source in df.iterrows():
+            if target['Redirect URL'] != source['Redirect URL']:
+                source_text = f"{source['Target Title']} {source['Category']} {source['Subcategory']}"
                 similarity = get_similarity(target_text, source_text)
                 
-                if similarity > similarity_threshold:
+                if similarity >= similarity_threshold:
                     results.append({
-                        'Target URL': target_row['Redirect URL'],
-                        'Source URL': source_row['Redirect URL'],
-                        'Target Title': target_row['Title'],
-                        'Source Title': source_row['Title'],
-                        'Similarity': similarity
+                        'Target URL': target['Redirect URL'],
+                        'Target Title': target['Target Title'],
+                        'Target Category': target['Category'],
+                        'Source URL': source['Redirect URL'],
+                        'Source Title': source['Target Title'],
+                        'Source Category': source['Category'],
+                        'Similarity': similarity,
+                        'Target Searches': target['avg_monthly_searches'],
+                        'Source Searches': source['avg_monthly_searches']
                     })
     
     return pd.DataFrame(results)
