@@ -1,191 +1,56 @@
-import re
-import nltk
 import pandas as pd
 import numpy as np
-import requests
+import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sqlalchemy import create_engine
-import streamlit as st
-from tqdm import tqdm
 import logging
-import os
-import ssl
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ===================== NLTK SETUP =====================
-try:
-    # Try to create unverified SSL context for NLTK downloads
-    _create_unverified_https_context = ssl._create_unverified_context
-except AttributeError:
-    pass
-else:
-    ssl._create_default_https_context = _create_unverified_https_context
+def process_data_without_db(uploaded_file):
+    """Process data without database dependency"""
+    # Read and clean main data
+    df_hybris = pd.read_csv(uploaded_file)
+    df_hybris = df_hybris[df_hybris['Type'] == 'Hybris'].copy()
+    
+    # Generate mock data
+    mock_data = {
+        'Redirect URL': df_hybris['URL'].sample(5).tolist() + ['https://example.com/1'],
+        'Category': ['Dresses', 'Shoes', 'Tops', 'Jeans', 'Accessories', 'Other'],
+        'Subcategory': ['Summer', 'Sandals', 'T-Shirts', 'Slim', 'Bags', 'Misc'],
+        'Title': ['Summer Dress', 'Comfy Sandals', 'Basic Tee', 'Skinny Jeans', 'Handbag', 'Sample'],
+        'Parent Category': ['Women']*5 + ['Men'],
+        'Count': [10, 5, 20, 15, 8, 3],
+        'Meta Description': ['Desc']*6,
+        'Description': ['Full desc']*6
+    }
+    
+    df_accelerate = pd.DataFrame(mock_data)
+    
+    # Merge datasets
+    df_combined = pd.concat([df_hybris, df_accelerate], ignore_index=True)
+    
+    # Generate crosslinks (simplified)
+    crosslinks = generate_crosslinks(df_combined)
+    
+    return crosslinks, df_combined, pd.DataFrame()  # Return mock DataFrames
 
-# Set NLTK data path
-nltk_data_path = os.path.join(os.path.expanduser("~"), "nltk_data")
-os.makedirs(nltk_data_path, exist_ok=True)
-os.environ["NLTK_DATA"] = nltk_data_path
-
-# Download required NLTK data
-try:
-    nltk.data.find('corpora/stopwords')
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    logger.info("Downloading NLTK data...")
-    nltk.download('stopwords', quiet=True)
-    nltk.download('wordnet', quiet=True)
-
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
-
-# Initialize NLP components
-stop_words = set(stopwords.words('english'))
-lemmatizer = WordNetLemmatizer()
-
-# ===================== CONSTANTS =====================
-DEFAULT_COLORS = [
-    'red', 'blue', 'green', 'black', 'white', 'yellow',
-    'pink', 'purple', 'orange', 'brown', 'gray', 'navy',
-    'teal', 'maroon', 'olive', 'silver', 'gold', 'beige'
-]
-
-# ===================== CORE FUNCTIONS =====================
-def clean_string_and_remove_stopwords(text):
-    """Clean and normalize text by removing stopwords and lemmatizing"""
-    if not isinstance(text, str) or not text.strip():
-        return None
-        
-    try:
-        # Remove special chars and lowercase
-        text = re.sub(r'[^a-zA-Z0-9\s]', '', text.lower())
-        # Tokenize, remove stopwords, and lemmatize
-        words = [lemmatizer.lemmatize(word) for word in text.split() 
-                if word not in stop_words and len(word) > 2]
-        return ' '.join(words)
-    except Exception as e:
-        logger.error(f"Text cleaning failed: {e}")
-        return text.lower()  # Fallback to simple lowercase
-
-def get_similarity(title, description):
-    """Calculate cosine similarity between texts (0-10 scale)"""
-    if not title or not description:
-        return 0.0
-        
-    try:
-        vectorizer = TfidfVectorizer()
-        vectors = vectorizer.fit_transform([title, description])
-        similarity = cosine_similarity(vectors[0:1], vectors[1:2])[0][0] * 10
-        return round(similarity, 2)
-    except Exception as e:
-        logger.error(f"Similarity calculation failed: {e}")
-        return 0.0
-
-# ===================== DATA FUNCTIONS =====================
-def get_ad_volumes(file_path, df):
-    """Get search volume data with fallback to mock data"""
-    try:
-        if file_path:
-            return pd.read_csv(file_path)
-            
-        # Generate mock data if no file provided
-        keywords = df['keyword'].dropna().unique()
-        months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
-                 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
-        
-        data = {
-            'keyword': np.repeat(keywords, len(months)),
-            'geo_location': df['geo_location'].iloc[0],
-            **{month: np.random.randint(100, 5000, len(keywords)) for month in months}
-        }
-        
-        volume_data = pd.DataFrame(data)
-        volume_data['avg_monthly_searches'] = volume_data[months].mean(axis=1)
-        return volume_data
-        
-    except Exception as e:
-        logger.error(f"Volume data generation failed: {e}")
-        return pd.DataFrame()
-
-def get_gsc_positions(file_path, domain):
-    """Get GSC data with fallback to mock data"""
-    try:
-        if file_path:
-            return pd.read_csv(file_path)
-            
-        return pd.DataFrame({
-            'keyword': ['dress', 'shoes', 'jacket', 'jeans', 't-shirt'],
-            'position': [2.5, 4.1, 7.8, 3.2, 5.4],
-            'clicks': [1200, 850, 420, 1100, 670],
-            'impressions': [15000, 12000, 8000, 14000, 9500]
-        })
-    except Exception as e:
-        logger.error(f"GSC data generation failed: {e}")
-        return pd.DataFrame()
-
-# ===================== DATABASE FUNCTIONS =====================
-def create_engine():
-    """Create database engine with credentials from Streamlit secrets"""
-    try:
-        if 'db_credentials' in st.secrets:
-            config = st.secrets['db_credentials']
-            return create_engine(
-                f"postgresql://{config['user']}:{config['password']}@"
-                f"{config['host']}:{config['port']}/{config['database']}"
-            )
-        return create_engine('sqlite:///:memory:')
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        return None
-
-# ===================== COLOR FUNCTIONS =====================
-def get_color_codes():
-    """Get color names with fallback to default list"""
-    try:
-        response = requests.get(
-            'http://www.nameacolor.com/COMPLETE%20COLOR%20NAMES%20TABLE.htm',
-            timeout=5
-        )
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(response.content, 'html.parser')
-        table = soup.find('table')
-        colors = pd.read_html(str(table))[0]['COLOR NAME'].str.lower().tolist()
-        return list(set(colors + DEFAULT_COLORS))  # Combine with defaults
-    except Exception as e:
-        logger.warning(f"Using default color list: {e}")
-        return DEFAULT_COLORS
-
-def extract_color_variations(title, color_codes):
-    """Generate color variations for a product title"""
-    if not title or not color_codes:
-        return []
-        
-    try:
-        title_lower = title.lower()
-        colors = [c for c in color_codes if c in title_lower]
-        variations = []
-        
-        if colors:
-            base_color = colors[0]
-            for color in color_codes:
-                if color != base_color and len(color.split()) == 1:  # Skip multi-word colors
-                    variation = re.sub(base_color, color, title_lower)
-                    variations.append(variation.title())
-        
-        return variations[:10]  # Limit to 10 variations
-    except Exception as e:
-        logger.error(f"Color variation extraction failed: {e}")
-        return []
-
-# ===================== INITIALIZATION =====================
-if __name__ == "__main__":
-    # Test NLTK data is available
-    try:
-        nltk.data.find('corpora/stopwords')
-        nltk.data.find('corpora/wordnet')
-        logger.info("NLTK data verified successfully")
-    except Exception as e:
-        logger.error(f"NLTK data verification failed: {e}")
+def generate_crosslinks(df):
+    """Generate crosslinks based on text similarity"""
+    vectorizer = TfidfVectorizer()
+    tfidf = vectorizer.fit_transform(df['Title'].fillna(''))
+    cosine_sim = cosine_similarity(tfidf, tfidf)
+    
+    results = []
+    for i, row in df.iterrows():
+        similar_indices = cosine_sim[i].argsort()[-4:-1][::-1]
+        for idx in similar_indices:
+            if idx != i:
+                results.append({
+                    'Target URL': row['URL'],
+                    'Redirect URL': df.iloc[idx]['URL'],
+                    'Similarity': cosine_sim[i][idx]
+                })
+    
+    return pd.DataFrame(results)
