@@ -1,107 +1,113 @@
 import streamlit as st
 import pandas as pd
-from functions import (
-    clean_string_and_remove_stopwords,
-    generate_mock_volumes,
-    process_crosslinks
-)
+import numpy as np
+from functions import process_data_without_db
 import io
 
-# App Config
-st.set_page_config(layout="wide")
+# App config
+st.set_page_config(layout="wide", page_title="SEO Cross-Link Generator")
 st.title("SEO Cross-Link Generator")
 
-# File Upload
-uploaded_file = st.file_uploader("Upload ALL_DATA.csv", type="csv")
+# Sidebar for configuration
+st.sidebar.header("Configuration")
+similarity_threshold = st.sidebar.slider(
+    "Similarity Threshold (0-10)",
+    min_value=1.0,
+    max_value=10.0,
+    value=5.0,
+    step=0.5,
+    help="Minimum similarity score (0-10) for categories to be linked"
+)
+
+max_links = st.sidebar.slider(
+    "Maximum Links Per Category",
+    min_value=1,
+    max_value=20,
+    value=10,
+    help="Maximum number of links a category can have"
+)
+
+# File upload
+st.header("Upload Data File")
+st.markdown("""
+Upload your data file containing category information. The file should include these columns:
+- URL
+- Title
+- Category
+- Subcategory
+- Parent Category (optional)
+- Count (optional)
+- Link Count (optional, existing links)
+""")
+
+uploaded_file = st.file_uploader("Upload ALL_DATA.csv", type=["csv", "tsv"])
 
 if uploaded_file:
-    try:
-        # Read data with correct template
-        df = pd.read_csv(uploaded_file, sep='\t') if '\t' in uploaded_file.getvalue().decode('utf-8')[:100] else pd.read_csv(uploaded_file)
-        
-        # Verify required columns exist
-        required_columns = ['URL', 'Type', 'Category', 'Subcategory', 'Title', 
-                           'Parent Category', 'Count', 'Meta Description', 'Description']
-        
-        missing_cols = [col for col in required_columns if col not in df.columns]
-        if missing_cols:
-            raise ValueError(f"Missing required columns: {missing_cols}")
-
-        # Filter Hybris products
-        df = df[df['Type'] == 'Hybris'].copy()
-        
-        # Generate keywords from Title
-        df['keyword'] = df['Title'].apply(
-            lambda x: clean_string_and_remove_stopwords(str(x)) if pd.notna(x) else None)
-        
-        # Generate mock volumes (aligned with your template)
-        volume_df = generate_mock_volumes(
-            keywords=df['keyword'].dropna().unique(),
-            months=['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
-                   'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
-        )
-        
-        # Merge with volume data
-        df = pd.merge(
-            df,
-            volume_df[['keyword', 'avg_monthly_searches']],
-            on='keyword',
-            how='left'
-        ).fillna(0)
-        
-        # Process crosslinks with your exact column names
-        crosslinks_df = process_crosslinks(
-            df.rename(columns={
-                'URL': 'Redirect URL',
-                'Title': 'Target Title'
-            })
-        )
-        
-        # Generate category summary
-        if not crosslinks_df.empty:
-            category_df = (crosslinks_df
-                          .groupby(['Target Title', 'Source Title'])
-                          .size()
-                          .reset_index(name='Link Count'))
-        else:
-            category_df = pd.DataFrame(columns=['Target Title', 'Source Title', 'Link Count'])
-        
-        # Create Excel output
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            crosslinks_df.to_excel(writer, sheet_name='Cross Links', index=False)
-            df.to_excel(writer, sheet_name='Product Data', index=False)
-            category_df.to_excel(writer, sheet_name='Category Links', index=False)
-        
-        # Download button
-        st.download_button(
-            label="Download Excel Report",
-            data=output.getvalue(),
-            file_name="newlook_crosslinks.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        
-        # Show previews
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Top Cross Links")
-            st.dataframe(crosslinks_df.sort_values('Similarity', ascending=False).head())
-        
-        with col2:
-            st.subheader("Top Categories")
-            st.dataframe(category_df.sort_values('Link Count', ascending=False).head())
-        
-    except Exception as e:
-        st.error(f"Error processing file: {str(e)}")
-        st.info("""
-        Your file must match this exact format:
-        - URL (e.g., https://www.newlook.com/uk/women/dresses)
-        - Type (must contain 'Hybris')
-        - Category (e.g., Dresses)
-        - Subcategory (e.g., Summer) 
-        - Title (e.g., Dress)
-        - Parent Category (e.g., Women)
-        - Count (numeric)
-        - Meta Description
-        - Description
-        """)
+    with st.spinner("Processing data... This may take a moment."):
+        try:
+            # Process data
+            cross_links_df, summary_df, categories_df = process_data_without_db(
+                uploaded_file,
+                similarity_threshold=similarity_threshold,
+                max_links=max_links
+            )
+            
+            # Show preview
+            st.success("Processing complete!")
+            
+            # Add metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Categories Processed", len(summary_df))
+            with col2:
+                st.metric("Total Cross-Links Generated", len(cross_links_df))
+            with col3:
+                avg_links = summary_df['Link Count'].mean()
+                st.metric("Average Links Per Category", f"{avg_links:.1f}")
+            
+            # Show data previews
+            tab1, tab2, tab3 = st.tabs(["Cross Links", "Summary", "Categories"])
+            
+            with tab1:
+                st.subheader("Cross Links Preview")
+                st.dataframe(cross_links_df.head(10))
+                
+            with tab2:
+                st.subheader("Category Summary")
+                st.dataframe(summary_df.sort_values('Link Count', ascending=True).head(10))
+                
+            with tab3:
+                st.subheader("Categories by Link Count")
+                st.dataframe(categories_df.head(10))
+            
+            # Download button
+            st.header("Download Results")
+            
+            # Create Excel output
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                cross_links_df.to_excel(writer, sheet_name='Cross Links', index=False)
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                categories_df.to_excel(writer, sheet_name='Categories', index=False)
+            
+            st.download_button(
+                label="📥 Download Excel Report",
+                data=output.getvalue(),
+                file_name="CrossLinks_Report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
+            st.info("""
+            Please make sure your file contains at least these columns:
+            - URL (e.g., https://www.newlook.com/uk/women/dresses)
+            - Category (e.g., Dresses)
+            - Subcategory (e.g., Summer) 
+            - Title (e.g., Summer Dresses)
+            
+            Optional columns:
+            - Parent Category (e.g., Women)
+            - Count (number of products)
+            - Link Count (existing links)
+            """)
