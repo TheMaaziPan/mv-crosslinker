@@ -115,30 +115,57 @@ def generate_summaries(crosslink_df):
     """Generate summary dataframes based on crosslinks"""
     
     # Create Summary sheet (list of all categories with their link counts)
-    summary_df = crosslink_df.groupby([
-        'Title', 'Redirect URL', 'Parent Category', 'Category', 'Subcategory'
-    ]).agg({
-        'Seasonality': 'first',
-        'avg_monthly_searches': 'first',
-        'position': 'first',
-        'Count': 'first'
-    }).reset_index()
+    if 'Target Title' in crosslink_df.columns:
+        group_cols = [
+            'Title', 'Redirect URL', 'Parent Category', 'Category', 'Subcategory'
+        ]
+    else:
+        # Handle case where columns might have different names
+        group_cols = [col for col in ['Title', 'Redirect URL', 'Parent Category', 'Category', 'Subcategory'] 
+                     if col in crosslink_df.columns]
     
-    # Count links for each URL in crosslink_df
-    link_counts = crosslink_df.groupby('Redirect URL').size().reset_index(name='Link Count')
+    # Use available columns for grouping
+    agg_dict = {}
+    for col in ['Seasonality', 'avg_monthly_searches', 'position', 'Count']:
+        if col in crosslink_df.columns:
+            agg_dict[col] = 'first'
     
-    # Merge link counts to summary
-    summary_df = pd.merge(
-        summary_df,
-        link_counts,
-        on='Redirect URL',
-        how='left'
-    ).fillna({'Link Count': 0})
+    # Generate summary if we have necessary columns
+    if group_cols and agg_dict:
+        summary_df = crosslink_df.groupby(group_cols).agg(agg_dict).reset_index()
+        
+        # Count links for each URL in crosslink_df
+        if 'Redirect URL' in crosslink_df.columns:
+            link_counts = crosslink_df.groupby('Redirect URL').size().reset_index(name='Link Count')
+            
+            # Merge link counts to summary
+            summary_df = pd.merge(
+                summary_df,
+                link_counts,
+                on='Redirect URL',
+                how='left'
+            ).fillna({'Link Count': 0})
+        else:
+            summary_df['Link Count'] = 0
+    else:
+        # Create empty summary dataframe with minimal columns
+        summary_df = pd.DataFrame(columns=['Title', 'Redirect URL', 'Link Count'])
     
-    # Create Categories sheet (list of categories with their link counts)
-    categories_df = crosslink_df.groupby([
-        'Parent Category', 'Category', 'Subcategory', 'Redirect URL'
-    ]).size().reset_index(name='Link Count')
+    # Create Categories sheet
+    if {'Parent Category', 'Category', 'Subcategory', 'Redirect URL'}.issubset(crosslink_df.columns):
+        categories_df = crosslink_df.groupby([
+            'Parent Category', 'Category', 'Subcategory', 'Redirect URL'
+        ]).size().reset_index(name='Link Count')
+    else:
+        # Create with available columns
+        group_cols = [col for col in ['Parent Category', 'Category', 'Subcategory', 'Redirect URL'] 
+                     if col in crosslink_df.columns]
+        
+        if group_cols:
+            categories_df = crosslink_df.groupby(group_cols).size().reset_index(name='Link Count')
+        else:
+            # Create empty categories dataframe
+            categories_df = pd.DataFrame(columns=['Category', 'Redirect URL', 'Link Count'])
     
     return summary_df, categories_df
 
