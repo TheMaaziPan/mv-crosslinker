@@ -12,6 +12,7 @@ This Streamlit application generates intelligent cross-links between category pa
 - **Link Balancing**: Ensures no category has more than the configured maximum of links (default: 10)
 - **Search Demand Prioritization**: Considers search volume in link recommendations
 - **Customizable Parameters**: Adjust similarity threshold and maximum links per category
+- **Interactive Configuration**: Manually configure category links after initial generation
 - **Excel Report Generation**: Creates a comprehensive Excel report with three sheets:
   - Cross Links: Detailed list of all recommended cross-links
   - Summary: Overview of all categories with link counts
@@ -44,7 +45,18 @@ This Streamlit application generates intelligent cross-links between category pa
    - Similarity Threshold: Minimum similarity score (0-10) for categories to be linked
    - Maximum Links Per Category: Limit on links per category
 
-4. Review the generated cross-links and download the Excel report
+4. Review the generated cross-links in the tabbed interface:
+   - **Cross Links**: View all generated cross-links
+   - **Summary**: See link distribution across categories
+   - **Categories**: Examine link counts by category
+   - **Configure Links**: Manually customize category relationships
+
+5. Use the interactive configuration options:
+   - Select source and target categories for custom linking
+   - Use the interactive data editor to manually edit any cross-links
+   - Apply your changes to update the final results
+
+6. Download the Excel report with your customized cross-linking strategy
 
 ## Data Format
 
